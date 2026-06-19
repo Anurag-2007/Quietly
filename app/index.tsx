@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
+//import { SafeAreaView } from "react-native-safe-area-context";
 import {
   View,
   Text,
@@ -11,6 +12,7 @@ import {
   Platform,
   ScrollView,
   SafeAreaView,
+  Switch,
 } from "react-native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -23,27 +25,27 @@ import { NativeModules } from "react-native";
 
 const { RingerMode } = NativeModules;
 
-const STORAGE_KEY = "MY_GEOFENCE";
+const STORAGE_KEY = "MY_GEOFENCES_LIST";
 const GEOFENCE_TASK_NAME = "BACKGROUND_GEOFENCE_TASK";
 
-// Background task logic (unchanged)
+// Background task logic
 TaskManager.defineTask(GEOFENCE_TASK_NAME, async ({ data, error }: any) => {
   if (error) {
     console.error("Geofence task error:", error.message);
     return;
   }
 
-  const { eventType } = data;
+  const { eventType, region } = data;
 
   if (eventType === Location.GeofencingEventType.Enter) {
-    console.log("Entered Geofence! Setting to Vibrate...");
+    console.log(`Entered Geofence (${region.identifier})! Setting to Vibrate...`);
     try {
       await RingerMode.setVibrate();
     } catch (e) {
       console.log("Failed to set vibrate in background:", e);
     }
   } else if (eventType === Location.GeofencingEventType.Exit) {
-    console.log("Exited Geofence! Restoring volume...");
+    console.log(`Exited Geofence (${region.identifier})! Restoring volume...`);
     try {
       await RingerMode.restore();
     } catch (e) {
@@ -52,12 +54,23 @@ TaskManager.defineTask(GEOFENCE_TASK_NAME, async ({ data, error }: any) => {
   }
 });
 
+interface Place {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius: number;
+  mode: string;
+  isActive: boolean;
+}
+
 export default function HomeScreen() {
   const webRef = useRef<WebView>(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [initialRegion, setInitialRegion] = useState({ lat: 28.6139, lng: 77.2090 });
 
+  const [draftName, setDraftName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [radius, setRadius] = useState("200");
   const [mode, setMode] = useState<"vibrate" | "silent">("vibrate");
@@ -67,10 +80,17 @@ export default function HomeScreen() {
     longitude: number;
   } | null>(null);
 
-  // Get user's current location on startup
+  const [places, setPlaces] = useState<Place[]>([]);
+
+  // Get user's current location & saved places on startup
   useEffect(() => {
     (async () => {
       try {
+        const saved = await AsyncStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          setPlaces(JSON.parse(saved));
+        }
+
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
           const loc = await Location.getCurrentPositionAsync({});
@@ -86,7 +106,7 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Update map radius dynamically when input changes
+  // Update map radius dynamically when input changes for the draft
   useEffect(() => {
     const r = Number(radius);
     if (!isNaN(r) && webRef.current) {
@@ -99,6 +119,34 @@ export default function HomeScreen() {
       `);
     }
   }, [radius]);
+
+  // Render all saved places on the map
+  useEffect(() => {
+    if (isMapReady && webRef.current) {
+      const script = `
+        if (window.placeLayers) {
+          window.placeLayers.forEach(l => map.removeLayer(l));
+        }
+        window.placeLayers = [];
+        
+        const currentPlaces = ${JSON.stringify(places)};
+        
+        currentPlaces.forEach(p => {
+          const color = p.isActive ? '#8A2BE2' : '#9CA3AF'; 
+          const savedCircle = L.circle([p.latitude, p.longitude], {
+            color: color,
+            fillColor: color,
+            fillOpacity: p.isActive ? 0.25 : 0.15,
+            weight: p.isActive ? 2 : 1,
+            radius: p.radius
+          }).addTo(map);
+          window.placeLayers.push(savedCircle);
+        });
+        true;
+      `;
+      webRef.current.injectJavaScript(script);
+    }
+  }, [places, isMapReady]);
 
   // Parse combined "Lat, Lng" input
   function setCoordinatesManually() {
@@ -120,7 +168,7 @@ export default function HomeScreen() {
 
     const r = Number(radius) || 200;
 
-    // Move map marker and update circle
+    // Move map marker and update draft circle
     webRef.current?.injectJavaScript(`
       if(marker) map.removeLayer(marker);
       if(circle) map.removeLayer(circle);
@@ -129,6 +177,45 @@ export default function HomeScreen() {
       map.setView([${lat}, ${lng}], 15);
       true;
     `);
+  }
+
+  async function syncGeofences(updatedPlaces: Place[]) {
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedPlaces));
+    setPlaces(updatedPlaces);
+
+    const bg = await Location.getBackgroundPermissionsAsync();
+    if (bg.status !== 'granted') {
+      const requestBg = await Location.requestBackgroundPermissionsAsync();
+      if (requestBg.status !== 'granted') {
+        Alert.alert(
+          "Permission denied",
+          "Background location is required for automatic profile switching."
+        );
+        return;
+      }
+    }
+
+    const activeRegions = updatedPlaces
+      .filter((p) => p.isActive)
+      .map((p) => ({
+        identifier: p.id,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        radius: p.radius,
+        notifyOnEnter: true,
+        notifyOnExit: true,
+      }));
+
+    try {
+      if (activeRegions.length > 0) {
+        await Location.startGeofencingAsync(GEOFENCE_TASK_NAME, activeRegions);
+      } else {
+        await Location.stopGeofencingAsync(GEOFENCE_TASK_NAME).catch(()=> {});
+      }
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert("Error starting geofence", err.message);
+    }
   }
 
   async function saveGeofence() {
@@ -143,41 +230,33 @@ export default function HomeScreen() {
       return;
     }
 
-    const bg = await Location.requestBackgroundPermissionsAsync();
-    if (!bg.granted) {
-      Alert.alert("Permission denied", "Background location is required for automatic profile switching.");
-      return;
-    }
-
-    const data = {
+    const newPlace: Place = {
+      id: `zone_${Date.now()}`,
+      name: draftName.trim() || `Zone ${places.length + 1}`,
       latitude: location.latitude,
       longitude: location.longitude,
-      radius: Number(radius),
+      radius: Number(radius) || 200,
       mode,
+      isActive: true,
     };
 
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const updated = [...places, newPlace];
+    await syncGeofences(updated);
+    
+    setDraftName("");
+    Alert.alert("Geofence Active 🛡️", `Monitoring started for ${newPlace.name}.`);
+  }
 
-    try {
-      await Location.startGeofencingAsync(GEOFENCE_TASK_NAME, [
-        {
-          identifier: "quietly-zone",
-          latitude: location.latitude,
-          longitude: location.longitude,
-          radius: Number(radius),
-          notifyOnEnter: true,
-          notifyOnExit: true,
-        },
-      ]);
-      
-      Alert.alert(
-        "Geofence Active 🛡️",
-        `Monitoring started.\n\nLat: ${location.latitude.toFixed(4)}\nLng: ${location.longitude.toFixed(4)}\nRadius: ${radius}m`
-      );
-    } catch (err: any) {
-      console.error(err);
-      Alert.alert("Error starting geofence", err.message);
-    }
+  async function togglePlace(id: string) {
+    const updated = places.map(p => 
+      p.id === id ? { ...p, isActive: !p.isActive } : p
+    );
+    await syncGeofences(updated);
+  }
+
+  async function deletePlace(id: string) {
+    const updated = places.filter(p => p.id !== id);
+    await syncGeofences(updated);
   }
 
   // HTML Map Setup (Light theme, drawing radius circle)
@@ -262,6 +341,16 @@ export default function HomeScreen() {
         <View style={styles.panelContainer}>
           <ScrollView contentContainerStyle={styles.panel} showsVerticalScrollIndicator={false}>
             
+            <Text style={styles.label}>Zone Name</Text>
+            <TextInput
+              style={[styles.input, { marginBottom: 20 }]}
+              value={draftName}
+              onChangeText={setDraftName}
+              keyboardType="default"
+              placeholder="e.g. IIIT Campus"
+              placeholderTextColor="#A0A0A0"
+            />
+
             <Text style={styles.label}>Location Coordinates</Text>
             <View style={styles.inputRow}>
               <TextInput
@@ -311,6 +400,40 @@ export default function HomeScreen() {
 
             <View style={styles.divider} />
 
+            {/* Managed Saved Places */}
+            <Text style={styles.labelCenter}>Active Zones ({places.length})</Text>
+            
+            {places.length === 0 && (
+              <Text style={styles.emptyText}>No zones saved yet.</Text>
+            )}
+
+            {places.map((place) => (
+              <View key={place.id} style={styles.placeCard}>
+                <View style={styles.placeInfo}>
+                  <Text style={[styles.placeTitle, !place.isActive && { color: '#9CA3AF' }]}>
+                    {place.name}
+                  </Text>
+                  <Text style={styles.placeSub}>
+                    {place.radius}m • {place.mode.charAt(0).toUpperCase() + place.mode.slice(1)}
+                  </Text>
+                </View>
+                
+                <View style={styles.placeActions}>
+                  <Switch
+                    trackColor={{ false: "#D1D5DB", true: "#C4B5FD" }}
+                    thumbColor={place.isActive ? "#8A2BE2" : "#9CA3AF"}
+                    onValueChange={() => togglePlace(place.id)}
+                    value={place.isActive}
+                  />
+                  <TouchableOpacity onPress={() => deletePlace(place.id)} style={styles.deleteBtn}>
+                    <Text style={styles.deleteBtnText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+
+            <View style={styles.divider} />
+
             <Text style={styles.labelCenter}>Developer Testing</Text>
             <View style={styles.testButtonsRow}>
               <TouchableOpacity 
@@ -352,7 +475,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF', // Clean background for top safe area
+    backgroundColor: '#FFFFFF', 
   },
   container: {
     flex: 1,
@@ -378,7 +501,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
-    marginTop: -20, // Creates a nice overlay effect over the map
+    marginTop: -20, 
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.08,
@@ -487,5 +610,55 @@ const styles = StyleSheet.create({
   btnSmallText: {
     fontWeight: "700",
     fontSize: 13,
+  },
+  
+  // New Styles for the Multiple Zones List
+  emptyText: {
+    textAlign: "center",
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    marginBottom: 20,
+  },
+  placeCard: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+  },
+  placeInfo: {
+    flex: 1,
+  },
+  placeTitle: {
+    fontWeight: "700",
+    fontSize: 16,
+    color: "#1F2937",
+    marginBottom: 4,
+  },
+  placeSub: {
+    fontSize: 13,
+    color: "#6B7280",
+  },
+  placeActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  deleteBtn: {
+    backgroundColor: "#FEE2E2",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  deleteBtnText: {
+    color: "#EF4444",
+    fontWeight: "bold",
+    fontSize: 14,
   },
 });
