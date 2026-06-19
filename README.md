@@ -1,50 +1,44 @@
-# Welcome to your Expo app 👋
+# 🤫 Quietly: Automated Geofence Audio Manager
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Quietly is a React Native Android application that automatically manages your phone's audio profile based on your physical location. 
 
-## Get started
+Drop a pin on the map, set a radius, and Quietly will automatically switch your phone to Vibrate or Silent mode—and instantly mute your media volume—whenever you walk into that zone (like a library, classroom, or office). When you leave the zone, Quietly seamlessly restores your exact previous ringer mode and media volume. 
 
-1. Install dependencies
+Built with **Expo**, **React Native**, and custom **Kotlin** native modules, Quietly utilizes background geofencing to work entirely hands-free, even when the app is completely closed or your phone is locked in your pocket.
 
-   ```bash
-   npm install
-   ```
+---
 
-2. Start the app
+## ✨ Features
 
-   ```bash
-   npx expo start
-   ```
+* **Background Geofencing:** Relies on `expo-task-manager` and `expo-location` to monitor boundaries in the background with minimal battery drain.
+* **Smart Audio & Media Management:** Custom Kotlin native modules interface directly with Android's `AudioManager`. It saves your exact previous ringer mode and media volume (`STREAM_MUSIC`) before muting, and restores them flawlessly upon exit.
+* **Interactive Map:** Uses Leaflet.js inside a WebView for a fluid, brightly-lit map experience to easily drop pins and visualize your geofence radius.
+* **Multiple Zones:** Add, name, and manage multiple locations simultaneously. Each zone has an independent toggle switch to pause/resume monitoring.
+* **Modern UI:** A sleek, minimal layout with soft visual accents and pill-shaped inputs.
+* **Developer Test Mode:** Built-in dashboard buttons to manually trigger `Enter` and `Exit` audio events without having to physically walk outside.
 
-In the output, you'll find options to open the app in a
+---
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 🛠 Tech Stack
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+* **Frontend:** React Native, Expo (Expo Router), React Native Safe Area Context
+* **Storage:** `@react-native-async-storage/async-storage`
+* **Location Services:** `expo-location`, `expo-task-manager`
+* **Maps:** `react-native-webview`, Leaflet.js
+* **Native Android:** Kotlin, Gradle
 
-## Get a fresh project
+---
 
-When you're ready, run:
+## 🚀 Installation & Setup
 
+Because Quietly uses custom native Android modules (Kotlin) to control device hardware volumes, **this app cannot be run in the standard Expo Go app.** You must compile a custom development build or a standalone release APK.
+
+### 1. Prerequisites
+* [Node.js](https://nodejs.org/) installed.
+* [Android Studio](https://developer.android.com/studio) installed (for the Android SDKs and Emulator).
+* An Android device plugged in via USB (Highly recommended for testing background location).
+
+### 2. Install Dependencies
+Clone the repository, navigate into the directory, and install the NPM packages:
 ```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+npm install
